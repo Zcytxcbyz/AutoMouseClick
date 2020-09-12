@@ -46,6 +46,7 @@ public:
 	afx_msg void OnBnClickedAutoclick();
 	afx_msg void OnBnClickedStart();
 	afx_msg void OnBnClickedStop();
+	const char* GetEditText(int nID);
 	afx_msg void OnClose();
 	DlgParams GetDlgParams();
 	CComboBox cb_type;

@@ -7,16 +7,20 @@
 #include "AutoMouseClickDlg.h"
 #include "afxdialogex.h"
 #include <thread>
+#include "rapidjson/document.h"
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
 
-
+char SettingFile[MAX_PATH];
 BOOL IsRunning = FALSE;
 LRESULT CALLBACK HookEvent(int nCode, WPARAM wParam, LPARAM lParam);
 HHOOK g_hHook = NULL;
 void AutoMouseClick(DlgParams params);
+void CreateJsonFile(const char* filename);
 // CAutoMouseClickDlg 对话框
 
 
@@ -54,16 +58,46 @@ BOOL CAutoMouseClickDlg::OnInitDialog()
 	//  执行此操作
 	SetIcon(m_hIcon, TRUE);			// 设置大图标
 	SetIcon(m_hIcon, FALSE);		// 设置小图标
-
 	// TODO: 在此添加额外的初始化代码
+	//GetFileNameWithoutExtension(SettingFile);
 	g_hHook = SetWindowsHookEx(WH_KEYBOARD_LL, HookEvent, GetModuleHandle(NULL), NULL);
-	cb_type.SetCurSel(0);
-	GetDlgItem(E_X)->SetWindowText(L"100");
-	GetDlgItem(E_Y)->SetWindowText(L"100");
-	GetDlgItem(E_INTERVAL)->SetWindowText(L"500");
-	GetDlgItem(E_DELAYED)->SetWindowText(L"20");
-	GetDlgItem(E_COUNT)->SetWindowText(L"10");
-	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
+	CRect FrmRect;
+	GetWindowRect(&FrmRect);
+	GetModuleFileNameA(NULL, SettingFile, MAX_PATH);
+	strcat_s(SettingFile, ".json");
+	FILE* file = NULL;
+	errno_t err = fopen_s(&file, SettingFile, "r");
+	if (err != 0)
+	{
+		CreateJsonFile(SettingFile);
+		SetFileAttributes(CString(SettingFile),FILE_ATTRIBUTE_HIDDEN);
+		fopen_s(&file, SettingFile, "r");
+	}
+	rapidjson::Document doc;
+	char buffer[1024];
+	fgets(buffer, 1024, file);
+	doc.Parse(buffer);
+	int left = doc["location"]["left"].GetInt();
+	int top = doc["location"]["top"].GetInt();
+	MoveWindow(left, top, FrmRect.Width(), FrmRect.Height());
+	((CButton*)GetDlgItem(C_AUTOPOS))->SetCheck(doc["parameters"]["CAUTOPOS"].GetBool());
+	GetDlgItem(E_X)->SetWindowText(CString(doc["parameters"]["EX"].GetString()));
+	GetDlgItem(E_Y)->SetWindowText(CString(doc["parameters"]["EY"].GetString()));
+	GetDlgItem(E_INTERVAL)->SetWindowText(CString(doc["parameters"]["EINTERVAL"].GetString()));
+	GetDlgItem(E_DELAYED)->SetWindowText(CString(doc["parameters"]["EDELAYED"].GetString()));
+	GetDlgItem(E_COUNT)->SetWindowText(CString(doc["parameters"]["ECOUNT"].GetString()));
+	((CButton*)GetDlgItem(C_AUTOCLICK))->SetCheck(doc["parameters"]["CAUTOCLICK"].GetBool());
+	cb_type.SetCurSel(doc["parameters"]["CBTYPE"].GetInt());
+	if (IsDlgButtonChecked(C_AUTOPOS))OnBnClickedAutopos();
+	if (IsDlgButtonChecked(C_AUTOCLICK))OnBnClickedAutoclick();
+	if (file) fclose(file);
+	CEdit E_Interval;
+	E_Interval.Attach(GetDlgItem(E_INTERVAL)->m_hWnd);
+	int nlength = E_Interval.GetWindowTextLengthW();
+	E_Interval.SetSel(nlength, nlength);
+	E_Interval.SetFocus();
+	E_Interval.Detach();
+	return FALSE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
 
 // 如果向对话框添加最小化按钮，则需要下面的代码
@@ -105,6 +139,33 @@ HCURSOR CAutoMouseClickDlg::OnQueryDragIcon()
 void CAutoMouseClickDlg::OnClose()
 {
 	UnhookWindowsHookEx(g_hHook);
+	FILE* file = NULL;
+	fopen_s(&file, SettingFile, "r");
+	rapidjson::Document doc;
+	char strbuffer[1024];
+	fgets(strbuffer, 1024, file);
+	doc.Parse(strbuffer);
+	fclose(file);
+	SetFileAttributes(CString(SettingFile), FILE_ATTRIBUTE_NORMAL);
+	fopen_s(&file, SettingFile, "w");
+	RECT FrmRect;
+	GetWindowRect(&FrmRect);
+	doc["location"]["left"].SetInt(FrmRect.left);
+	doc["location"]["top"].SetInt(FrmRect.top);
+	doc["parameters"]["CAUTOPOS"].SetBool(IsDlgButtonChecked(C_AUTOPOS));
+	doc["parameters"]["EX"].SetString(rapidjson::GenericStringRef<char>(GetEditText(E_X)));
+	doc["parameters"]["EY"].SetString(rapidjson::GenericStringRef<char>(GetEditText(E_Y)));
+	doc["parameters"]["EINTERVAL"].SetString(rapidjson::GenericStringRef<char>(GetEditText(E_INTERVAL)));
+	doc["parameters"]["EDELAYED"].SetString(rapidjson::GenericStringRef<char>(GetEditText(E_DELAYED)));
+	doc["parameters"]["ECOUNT"].SetString(rapidjson::GenericStringRef<char>(GetEditText(E_COUNT)));
+	doc["parameters"]["CAUTOCLICK"].SetBool(IsDlgButtonChecked(C_AUTOCLICK));
+	doc["parameters"]["CBTYPE"].SetInt(cb_type.GetCurSel());
+	rapidjson::StringBuffer buffer;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+	doc.Accept(writer);
+	fprintf_s(file, buffer.GetString());
+	fclose(file);
+	SetFileAttributes(CString(SettingFile), FILE_ATTRIBUTE_HIDDEN);
 	CDialogEx::OnClose();
 }
 
@@ -247,6 +308,56 @@ void AutoMouseClick(DlgParams params)
 			if(count >= params.Count) break;
 		}
 	}
+}
+
+void CreateJsonFile(const char* filename)
+{
+	FILE* file;
+	fopen_s(&file, filename, "w");
+	rapidjson::StringBuffer buffer;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+	writer.StartObject();
+	writer.Key("location");
+	writer.StartObject();
+	writer.Key("left");
+	writer.Int(0);
+	writer.Key("top");
+	writer.Int(0);
+	writer.EndObject();
+	writer.Key("parameters");
+	writer.StartObject();
+	writer.Key("CAUTOPOS");
+	writer.Bool(false);
+	writer.Key("EX");
+	writer.String("100");
+	writer.Key("EY");
+	writer.String("100");
+	writer.Key("EINTERVAL");
+	writer.String("500");
+	writer.Key("EDELAYED");
+	writer.String("20");
+	writer.Key("ECOUNT");
+	writer.String("10");
+	writer.Key("CAUTOCLICK");
+	writer.Bool(false);
+	writer.Key("CBTYPE");
+	writer.Int(0);
+	writer.EndObject();
+	writer.EndObject();
+	fprintf_s(file, buffer.GetString());
+	fclose(file);
+}
+
+const char* CAutoMouseClickDlg::GetEditText(int nID)
+{
+	CString WStr;
+	GetDlgItem(nID)->GetWindowTextW(WStr);
+	size_t len = wcslen(WStr) + 1;
+	size_t converted = 0;
+	char* CStr;
+	CStr = (char*)malloc(len * sizeof(char));
+	wcstombs_s(&converted, CStr, len, WStr, _TRUNCATE);
+	return CStr;
 }
 
 
